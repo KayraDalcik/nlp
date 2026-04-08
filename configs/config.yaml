@@ -1,0 +1,44 @@
+# ─── Turkish Legal RAG — Central Configuration ────────────────────────────────
+
+paths:
+  data_raw:        data/raw
+  data_processed:  data/processed
+  data_benchmark:  data/benchmark
+  faiss_index:     data/processed/faiss_index
+  results_dir:     results
+
+# ─── Embedding ─────────────────────────────────────────────────────────────────
+embedding:
+  model: sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+  dim:   768
+  batch_size: 32
+  normalize: true
+
+# ─── Retrieval ─────────────────────────────────────────────────────────────────
+retrieval:
+  top_k: 5
+  mode: dense          # options: dense | bm25 | hybrid
+  hybrid_alpha: 0.7    # weight for dense score (1-alpha for BM25)
+
+# ─── LLM ───────────────────────────────────────────────────────────────────────
+llm:
+  model: Qwen/Qwen2.5-3B-Instruct
+  max_new_tokens: 512
+  temperature: 0.1
+  dtype: float16       # float32 for CPU
+
+# ─── Evaluation ────────────────────────────────────────────────────────────────
+evaluation:
+  metrics:
+    - rouge_l
+    - bert_score
+    - ragas           # requires OPENAI_API_KEY or local LLM
+  bert_score_lang: tr
+  ragas_enabled: false  # set true if API key is available
+  benchmark_file: data/benchmark/test_questions.jsonl
+  max_samples: 100     # set null to evaluate all test samples
+
+# ─── Experiment Tracking ───────────────────────────────────────────────────────
+tracking:
+  wandb_enabled: false
+  project: turkish-legal-rag
