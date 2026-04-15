@@ -6,6 +6,7 @@ Ablasyon 1: Baseline RAG Pipeline
 """
 
 import os
+import sys
 import json
 import torch
 import numpy as np
@@ -15,6 +16,9 @@ from typing import List, Dict
 from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from dotenv import load_dotenv
+
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
 
 load_dotenv()
 
@@ -122,15 +126,20 @@ class LLMGenerator:
             for i, doc in enumerate(context_docs)
         ])
 
-        prompt = f"""Sen bir Türk hukuku uzmanısın. Aşağıdaki hukuki belgeleri kullanarak soruyu yanıtla.
-Yanıtında kaynak göster (örn: "Kaynak 1'e göre..."). Eğer yanıtı bilmiyorsan "Bu konuda yeterli bilgi bulunamadı." de.
+        system_msg = (
+            "Sen bir Türk hukuku uzmanısın. Aşağıdaki hukuki belgeleri kullanarak soruyu yanıtla. "
+            "Yanıtında kaynak göster (örn: \"Kaynak 1'e göre...\"). "
+            "Eğer yanıtı bilmiyorsan \"Bu konuda yeterli bilgi bulunamadı.\" de."
+        )
+        user_msg = f"Hukuki Belgeler:\n{context}\n\nSoru: {question}"
 
-Hukuki Belgeler:
-{context}
-
-Soru: {question}
-
-Yanıt:"""
+        messages = [
+            {"role": "system", "content": system_msg},
+            {"role": "user",   "content": user_msg},
+        ]
+        prompt = self.tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
 
         inputs = self.tokenizer(prompt, return_tensors="pt").to(DEVICE)
         with torch.no_grad():

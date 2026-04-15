@@ -38,7 +38,7 @@ Copy-Item .env.example .env
 
 Sonra `.env` dosyasını aç ve şu bilgileri doldur:
 - `HF_TOKEN` → https://huggingface.co/settings/tokens
-- `KAGGLE_USERNAME` + `KAGGLE_KEY` → https://www.kaggle.com/settings > API > Create Token
+- `KAGGLE_API_TOKEN` → https://www.kaggle.com/settings > API > Create New Token (KGAT_ ile başlayan token)
 
 ---
 

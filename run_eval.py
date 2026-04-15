@@ -112,11 +112,6 @@ def main():
         b = results["baseline"]
         h = results["hybrid"]
 
-        def delta(a, b_val):
-            diff = b_val - a
-            sign = "+" if diff >= 0 else ""
-            return f"{sign}{diff:+.4f}"
-
         print("\n" + "=" * 60)
         print("  KARŞILAŞTIRMA TABLOSU")
         print("=" * 60)
@@ -125,6 +120,11 @@ def main():
         metrics = [
             ("ROUGE-L F1",        b.rouge_l_f1,        h.rouge_l_f1),
             ("BERTScore F1",       b.bert_score_f1,     h.bert_score_f1),
+            ("Recall@1",           b.recall_at_1,       h.recall_at_1),
+            ("Recall@3",           b.recall_at_3,       h.recall_at_3),
+            ("Recall@5",           b.recall_at_5,       h.recall_at_5),
+            ("MRR",                b.mrr,               h.mrr),
+            ("nDCG@5",             b.ndcg_at_5,         h.ndcg_at_5),
             ("Avg Retrieval Skor", b.avg_retrieval_score, h.avg_retrieval_score),
             ("Avg Ret. Süresi(ms)",b.avg_retrieval_time_ms, h.avg_retrieval_time_ms),
         ]
@@ -140,12 +140,22 @@ def main():
             "baseline": {
                 "rouge_l_f1":           b.rouge_l_f1,
                 "bert_score_f1":        b.bert_score_f1,
+                "recall_at_1":          b.recall_at_1,
+                "recall_at_3":          b.recall_at_3,
+                "recall_at_5":          b.recall_at_5,
+                "mrr":                  b.mrr,
+                "ndcg_at_5":            b.ndcg_at_5,
                 "avg_retrieval_score":  b.avg_retrieval_score,
                 "avg_retrieval_time_ms": b.avg_retrieval_time_ms,
             },
             "hybrid": {
                 "rouge_l_f1":           h.rouge_l_f1,
                 "bert_score_f1":        h.bert_score_f1,
+                "recall_at_1":          h.recall_at_1,
+                "recall_at_3":          h.recall_at_3,
+                "recall_at_5":          h.recall_at_5,
+                "mrr":                  h.mrr,
+                "ndcg_at_5":            h.ndcg_at_5,
                 "avg_retrieval_score":  h.avg_retrieval_score,
                 "avg_retrieval_time_ms": h.avg_retrieval_time_ms,
             },

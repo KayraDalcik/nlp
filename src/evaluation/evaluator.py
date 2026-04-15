@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-Evaluation Metrics — ROUGE-L, BERTScore, (opsiyonel RAGAS)
+Evaluation Metrics — ROUGE-L, BERTScore, Recall@k, MRR, nDCG, (opsiyonel RAGAS)
 Tüm ablasyon deneyleri bu modül üzerinden karşılaştırılır.
 """
 
+import re
 import sys
 import json
+import math
 import time
 import warnings
 from pathlib import Path
 from typing import List, Dict, Optional
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, field, asdict
 
 import numpy as np
 
@@ -32,9 +34,15 @@ class EvalResult:
     bert_score_f1:   float
     bert_score_precision: float
     bert_score_recall:    float
-    avg_retrieval_score:  float     # FAISS top-1 similarity score
+    avg_retrieval_score:  float
     avg_retrieval_time_ms: float
     avg_generation_time_ms: float
+    # Retrieval quality
+    recall_at_1:     float = 0.0
+    recall_at_3:     float = 0.0
+    recall_at_5:     float = 0.0
+    mrr:             float = 0.0
+    ndcg_at_5:       float = 0.0
     # RAGAS (opsiyonel)
     ragas_faithfulness:      Optional[float] = None
     ragas_answer_relevance:  Optional[float] = None
@@ -48,6 +56,11 @@ class EvalResult:
             f"  Örnek sayısı       : {self.num_samples}",
             f"  ROUGE-L F1         : {self.rouge_l_f1:.4f}",
             f"  BERTScore F1 (tr)  : {self.bert_score_f1:.4f}",
+            f"  Recall@1           : {self.recall_at_1:.4f}",
+            f"  Recall@3           : {self.recall_at_3:.4f}",
+            f"  Recall@5           : {self.recall_at_5:.4f}",
+            f"  MRR                : {self.mrr:.4f}",
+            f"  nDCG@5             : {self.ndcg_at_5:.4f}",
             f"  Avg Retrieval Skoru: {self.avg_retrieval_score:.4f}",
             f"  Retrieval süresi   : {self.avg_retrieval_time_ms:.1f} ms/soru",
             f"  Generation süresi  : {self.avg_generation_time_ms:.1f} ms/soru",
@@ -112,6 +125,67 @@ class BertScoreEvaluator:
         }
 
 
+# ─── Retrieval Kalite Metrikleri ──────────────────────────────────────────────
+class RetrievalMetrics:
+    """Recall@k, MRR, nDCG hesaplar. Relevance = token overlap ile belirlenir."""
+
+    _SPLIT_RE = re.compile(r"[^\w]+")
+
+    @classmethod
+    def _tokenize(cls, text: str) -> set:
+        return set(cls._SPLIT_RE.split(text.lower())) - {""}
+
+    @classmethod
+    def is_relevant(cls, doc_text: str, reference: str, threshold: float = 0.35) -> bool:
+        ref_tokens = cls._tokenize(reference)
+        if not ref_tokens:
+            return False
+        doc_tokens = cls._tokenize(doc_text)
+        containment = len(ref_tokens & doc_tokens) / len(ref_tokens)
+        return containment >= threshold
+
+    @staticmethod
+    def recall_at_k(relevances: List[bool], k: int) -> float:
+        return 1.0 if any(relevances[:k]) else 0.0
+
+    @staticmethod
+    def reciprocal_rank(relevances: List[bool]) -> float:
+        for i, rel in enumerate(relevances):
+            if rel:
+                return 1.0 / (i + 1)
+        return 0.0
+
+    @staticmethod
+    def ndcg_at_k(relevances: List[bool], k: int) -> float:
+        rels = [1.0 if r else 0.0 for r in relevances[:k]]
+        dcg = sum(r / math.log2(i + 2) for i, r in enumerate(rels))
+        ideal = sorted(rels, reverse=True)
+        idcg = sum(r / math.log2(i + 2) for i, r in enumerate(ideal))
+        return dcg / idcg if idcg > 0 else 0.0
+
+    @classmethod
+    def compute(cls, all_docs: List[List[Dict]], references: List[str],
+                k_values: List[int] = (1, 3, 5)) -> Dict[str, float]:
+        all_recall = {k: [] for k in k_values}
+        all_mrr = []
+        all_ndcg = []
+        max_k = max(k_values)
+
+        for docs, ref in zip(all_docs, references):
+            rels = [cls.is_relevant(d["text"], ref) for d in docs]
+            for k in k_values:
+                all_recall[k].append(cls.recall_at_k(rels, k))
+            all_mrr.append(cls.reciprocal_rank(rels))
+            all_ndcg.append(cls.ndcg_at_k(rels, max_k))
+
+        result = {}
+        for k in k_values:
+            result[f"recall@{k}"] = float(np.mean(all_recall[k]))
+        result["mrr"] = float(np.mean(all_mrr))
+        result[f"ndcg@{max_k}"] = float(np.mean(all_ndcg))
+        return result
+
+
 # ─── Ana Evaluatör ────────────────────────────────────────────────────────────
 class RAGEvaluator:
     def __init__(self, experiment_name: str, bert_lang: str = "tr"):
@@ -148,6 +222,7 @@ class RAGEvaluator:
 
         predictions  = []
         references   = []
+        all_docs     = []
         ret_scores   = []
         ret_times    = []
         gen_times    = []
@@ -156,13 +231,14 @@ class RAGEvaluator:
             question  = sample["question"]
             reference = sample["reference_answer"]
 
-            # ── Retrieval ──
+            # ── Retrieval (pipeline'ın kendi query yolunu kullan) ──
             t0 = time.perf_counter()
-            q_emb = rag_pipeline.embedder.encode([question], show_progress=False)[0]
-            docs  = rag_pipeline.retriever.search(q_emb, top_k=rag_pipeline.top_k)
+            result = rag_pipeline.query(question, use_llm=False)
             ret_time_ms = (time.perf_counter() - t0) * 1000
             ret_times.append(ret_time_ms)
 
+            docs = result["retrieved_docs"]
+            all_docs.append(docs)
             top_score = docs[0]["score"] if docs else 0.0
             ret_scores.append(top_score)
 
@@ -172,7 +248,6 @@ class RAGEvaluator:
                 answer = rag_pipeline.llm.generate(question, docs)
                 gen_times.append((time.perf_counter() - t1) * 1000)
             else:
-                # Retrieval-only: top belgeyi cevap olarak kullan
                 answer = docs[0]["text"][:500] if docs else ""
                 gen_times.append(0.0)
 
@@ -190,6 +265,10 @@ class RAGEvaluator:
         print("[EVAL] BERTScore hesaplanıyor (ilk seferinde model indirilir)...")
         bert_scores = self.bert.batch_score(predictions, references)
 
+        # ── Retrieval Quality: Recall@k, MRR, nDCG ──
+        print("[EVAL] Recall@k / MRR / nDCG hesaplanıyor...")
+        ret_metrics = RetrievalMetrics.compute(all_docs, references, k_values=[1, 3, 5])
+
         result = EvalResult(
             experiment_name        = self.experiment_name,
             num_samples            = len(samples),
@@ -202,6 +281,11 @@ class RAGEvaluator:
             avg_retrieval_score    = float(np.mean(ret_scores)),
             avg_retrieval_time_ms  = float(np.mean(ret_times)),
             avg_generation_time_ms = float(np.mean(gen_times)),
+            recall_at_1            = ret_metrics["recall@1"],
+            recall_at_3            = ret_metrics["recall@3"],
+            recall_at_5            = ret_metrics["recall@5"],
+            mrr                    = ret_metrics["mrr"],
+            ndcg_at_5              = ret_metrics["ndcg@5"],
         )
 
         print(result.summary())
